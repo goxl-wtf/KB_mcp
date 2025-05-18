@@ -120,3 +120,5 @@ test_migration/
 demo_storage/
 knowledge_bases/
 self_analysis/
+__pycache__/
+*.pyc

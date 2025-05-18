@@ -1,6 +1,6 @@
 # KB_mcp - Knowledge Base MCP Server
 
-A Model Context Protocol (MCP) server for managing hierarchical knowledge bases with advanced features including categories, cross-references, and codebase analysis.
+A Model Context Protocol (MCP) server for managing hierarchical knowledge bases with advanced features including categories, cross-references, codebase analysis, and token-aware responses.
 
 ## Overview
 
