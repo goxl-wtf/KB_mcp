@@ -1,0 +1,14 @@
+{
+  "name": "hierarchical-kb",
+  "version": "1.0.0",
+  "description": "Hierarchical Knowledge Base MCP Server",
+  "command": "python",
+  "args": ["src/main.py"],
+  "schema": {
+    "storageDir": {
+      "type": "string",
+      "description": "Directory for knowledge base storage",
+      "default": "~/.hierarchical-kb/storage"
+    }
+  }
+}
