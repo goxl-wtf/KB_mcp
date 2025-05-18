@@ -11,6 +11,7 @@ import fastmcp
 
 from models import Note, Category
 from utils import validate_id, get_safe_filename, get_content_preview
+from utils.token_utils import TokenCounter, PaginatedResponse, ResponseBuilder
 
 
 def register_note_tools(mcp: fastmcp.FastMCP, state):
@@ -85,12 +86,13 @@ def register_note_tools(mcp: fastmcp.FastMCP, state):
             return {"error": f"Failed to create note: {str(e)}"}
     
     @mcp.tool()
-    def read_note(note_id: str, category_path: Optional[str] = None) -> Dict[str, Any]:
+    def read_note(note_id: str, category_path: Optional[str] = None, page: Optional[int] = None) -> Dict[str, Any]:
         """Read a note by ID.
         
         Args:
             note_id: ID of the note to read
             category_path: Optional category path to search in
+            page: Optional page number if content is paginated
         
         Returns:
             Note content and metadata or error
@@ -126,18 +128,69 @@ def register_note_tools(mcp: fastmcp.FastMCP, state):
             if relative_cat_path == ".":
                 relative_cat_path = "/"
             
-            return {
-                "id": note.id,
-                "title": note.title,
-                "content": note.content,
-                "category_path": relative_cat_path,
-                "created_at": note.created_at.isoformat(),
-                "updated_at": note.updated_at.isoformat(),
-                "tags": note.tags,
-                "linked_notes": note.linked_notes,
-                "linked_kbs": note.linked_kbs,
-                "path": str(note.path)
-            }
+            # Check if content needs pagination
+            token_counter = TokenCounter()
+            content_estimate = token_counter.estimate_tokens(note.content)
+            
+            if content_estimate.estimated_tokens > token_counter.SAFE_LIMIT:
+                # Content needs pagination
+                lines = note.content.split('\n')
+                
+                # Calculate pages based on lines
+                pages = []
+                current_page = []
+                current_size = 0
+                
+                for line in lines:
+                    line_estimate = token_counter.estimate_tokens(line + '\n')
+                    if current_size + line_estimate.estimated_tokens > token_counter.SAFE_LIMIT:
+                        pages.append('\n'.join(current_page))
+                        current_page = [line]
+                        current_size = line_estimate.estimated_tokens
+                    else:
+                        current_page.append(line)
+                        current_size += line_estimate.estimated_tokens
+                
+                if current_page:
+                    pages.append('\n'.join(current_page))
+                
+                # Return requested page
+                page_num = page or 1
+                if not 1 <= page_num <= len(pages):
+                    return {"error": f"Page {page_num} out of range (1-{len(pages)})"}
+                
+                return {
+                    "id": note.id,
+                    "title": note.title,
+                    "content": pages[page_num - 1],
+                    "category_path": relative_cat_path,
+                    "created_at": note.created_at.isoformat(),
+                    "updated_at": note.updated_at.isoformat(),
+                    "tags": note.tags,
+                    "linked_notes": note.linked_notes,
+                    "linked_kbs": note.linked_kbs,
+                    "path": str(note.path),
+                    "page": page_num,
+                    "total_pages": len(pages),
+                    "content_truncated": True
+                }
+            else:
+                # Content fits in single response
+                return {
+                    "id": note.id,
+                    "title": note.title,
+                    "content": note.content,
+                    "category_path": relative_cat_path,
+                    "created_at": note.created_at.isoformat(),
+                    "updated_at": note.updated_at.isoformat(),
+                    "tags": note.tags,
+                    "linked_notes": note.linked_notes,
+                    "linked_kbs": note.linked_kbs,
+                    "path": str(note.path),
+                    "page": 1,
+                    "total_pages": 1,
+                    "content_truncated": False
+                }
             
         except Exception as e:
             return {"error": f"Failed to read note: {str(e)}"}
@@ -327,20 +380,22 @@ def register_note_tools(mcp: fastmcp.FastMCP, state):
     def list_notes(
         category_path: Optional[str] = None,
         recursive: bool = False,
-        tags: Optional[List[str]] = None
-    ) -> List[Dict[str, Any]]:
+        tags: Optional[List[str]] = None,
+        page: Optional[int] = None
+    ) -> Dict[str, Any]:
         """List notes in the current knowledge base.
         
         Args:
             category_path: Optional category to list from
             recursive: Whether to include notes from subcategories
             tags: Optional tags to filter by
+            page: Optional page number for pagination
         
         Returns:
-            List of note summaries
+            Dictionary with note metadata and pagination info
         """
         if not state.current_kb:
-            return [{"error": "No knowledge base selected"}]
+            return {"error": "No knowledge base selected"}
         
         try:
             kb_path = state.storage_path / state.current_kb
@@ -374,24 +429,31 @@ def register_note_tools(mcp: fastmcp.FastMCP, state):
                     if cat_path == ".":
                         cat_path = "/"
                     
-                    notes.append({
+                    # Create metadata-only representation
+                    note_metadata = {
                         "id": note.id,
                         "title": note.title,
                         "category_path": cat_path,
-                        "preview": get_content_preview(note.content, max_length=150),
                         "tags": note.tags,
                         "created_at": note.created_at.isoformat(),
                         "updated_at": note.updated_at.isoformat(),
-                        "linked_notes": len(note.linked_notes),
-                        "linked_kbs": len(note.linked_kbs)
-                    })
+                        "linked_notes_count": len(note.linked_notes),
+                        "linked_kbs_count": len(note.linked_kbs),
+                        "content_length": len(note.content)
+                    }
+                    notes.append(note_metadata)
                 except Exception as e:
                     print(f"Error loading note {note_path}: {e}")
             
-            return sorted(notes, key=lambda n: n["title"])
+            # Sort notes by title
+            sorted_notes = sorted(notes, key=lambda n: n["title"])
+            
+            # Use pagination
+            paginated = PaginatedResponse(sorted_notes, page_size=50)
+            return paginated.get_page(page or 1)
             
         except Exception as e:
-            return [{"error": f"Failed to list notes: {str(e)}"}]
+            return {"error": f"Failed to list notes: {str(e)}"}
     
     @mcp.tool()
     def link_notes(

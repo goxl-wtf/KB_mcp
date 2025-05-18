@@ -13,6 +13,7 @@ import fastmcp
 
 from models import Note, Category, KnowledgeBase
 from utils import get_content_preview
+from utils.token_utils import TokenCounter, PaginatedResponse, ResponseBuilder
 
 
 def register_search_tools(mcp: fastmcp.FastMCP, state):
@@ -28,8 +29,9 @@ def register_search_tools(mcp: fastmcp.FastMCP, state):
         search_title: bool = True,
         case_sensitive: bool = False,
         regex: bool = False,
-        max_results: int = 50
-    ) -> List[Dict[str, Any]]:
+        max_results: int = 50,
+        page: Optional[int] = None
+    ) -> Dict[str, Any]:
         """Search for notes across knowledge bases.
         
         Args:
@@ -44,9 +46,10 @@ def register_search_tools(mcp: fastmcp.FastMCP, state):
             max_results: Maximum number of results to return
         
         Returns:
-            List of matching notes with relevance scores
+            Dictionary with search results and pagination info
         """
         results = []
+        response_builder = ResponseBuilder()
         
         # Determine search scope
         if kb_id:
@@ -113,6 +116,9 @@ def register_search_tools(mcp: fastmcp.FastMCP, state):
                     rel_path = str(note_path.parent.relative_to(kb_root))
                     kb_id = kb_root.name
                     
+                    # Create snippet with context
+                    snippet = get_content_preview(note.content, max_length=1000)
+                    
                     results.append({
                         "note_id": note.id,
                         "title": note.title,
@@ -120,7 +126,7 @@ def register_search_tools(mcp: fastmcp.FastMCP, state):
                         "category_path": rel_path if rel_path != "." else "/",
                         "score": score,
                         "matches": matches,
-                        "preview": get_content_preview(note.content, max_length=100),
+                        "snippet": snippet,
                         "tags": note.tags,
                         "created_at": note.created_at.isoformat(),
                         "updated_at": note.updated_at.isoformat()
@@ -133,8 +139,12 @@ def register_search_tools(mcp: fastmcp.FastMCP, state):
         # Sort by relevance score
         results.sort(key=lambda x: x["score"], reverse=True)
         
-        # Limit results
-        return results[:max_results]
+        # Limit and paginate results
+        limited_results = results[:max_results]
+        
+        # Use pagination
+        paginated = PaginatedResponse(limited_results)
+        return paginated.get_page(page or 1)
     
     @mcp.tool()
     def search_with_ripgrep(

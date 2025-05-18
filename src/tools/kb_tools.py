@@ -12,6 +12,7 @@ import fastmcp
 
 from models import KnowledgeBase, Category, Note
 from utils import ensure_directory, validate_id, get_safe_filename
+from utils.token_utils import TokenCounter, PaginatedResponse, ResponseBuilder
 
 
 def register_kb_tools(mcp: fastmcp.FastMCP, state):
@@ -71,19 +72,23 @@ def register_kb_tools(mcp: fastmcp.FastMCP, state):
             return {"error": f"Failed to create knowledge base: {str(e)}"}
     
     @mcp.tool()
-    def list_kbs() -> List[Dict[str, Any]]:
+    def list_kbs(page: Optional[int] = None) -> Dict[str, Any]:
         """List all available knowledge bases.
         
+        Args:
+            page: Optional page number for pagination
+        
         Returns:
-            List of KB summaries
+            Dictionary with KB metadata and pagination info
         """
         try:
             kbs = KnowledgeBase.list_all(state.storage_path)
             
-            return [{
+            # Extract metadata for each KB
+            kb_metadata = [{
                 "id": kb.id,
                 "title": kb.title,
-                "description": kb.description,
+                "description": kb.description[:200] + "..." if len(kb.description) > 200 else kb.description,
                 "created_at": kb.created_at.isoformat(),
                 "updated_at": kb.updated_at.isoformat(),
                 "parent_kb": kb.parent_kb,
@@ -91,8 +96,22 @@ def register_kb_tools(mcp: fastmcp.FastMCP, state):
                 "is_selected": kb.id == state.current_kb
             } for kb in kbs]
             
+            # Use pagination if needed
+            if len(kb_metadata) > 20 or page is not None:
+                paginated = PaginatedResponse(kb_metadata, page_size=20)
+                return paginated.get_page(page or 1)
+            
+            return {
+                "items": kb_metadata,
+                "page": 1,
+                "total_pages": 1,
+                "total_items": len(kb_metadata),
+                "has_next": False,
+                "has_previous": False
+            }
+            
         except Exception as e:
-            return [{"error": f"Failed to list knowledge bases: {str(e)}"}]
+            return {"error": f"Failed to list knowledge bases: {str(e)}"}
     
     @mcp.tool()
     def select_kb(kb_id: str) -> Dict[str, Any]:
